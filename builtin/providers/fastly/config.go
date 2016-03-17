@@ -2,7 +2,6 @@ package fastly
 
 import (
 	"fmt"
-	"log"
 
 	gofastly "github.com/sethvargo/go-fastly"
 )
@@ -27,10 +26,6 @@ func (c *Config) Client() (interface{}, error) {
 		return nil, err
 	}
 
-	log.Printf("\n----- conn: %#v\n---\n", fconn)
-
 	client.conn = fconn
-
-	log.Printf("\n---\nDEBUG\n---\nClient: %#v\n\n---\n", client)
 	return &client, nil
 }

@@ -15,16 +15,18 @@ func TestAccFastlyServiceV1_basic(t *testing.T) {
 	var service gofastly.Service
 	name := acctest.RandString(10)
 	nameUpdate := acctest.RandString(10)
+	domainName := acctest.RandString(10)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckServiceV1Destroy,
 		Steps: []resource.TestStep{
 			resource.TestStep{
-				Config: testAccServiceV1Config(name),
+				Config: testAccServiceV1Config(name, domainName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckServiceV1Exists("fastly_service_v1.foo", &service),
-					testAccCheckFastlyServiceV1Attributes(&service, name),
+					testAccCheckFastlyServiceV1Attributes(&service, name, domainName),
 					resource.TestCheckResourceAttr(
 						"fastly_service_v1.foo", "name", name),
 					resource.TestCheckResourceAttr(
@@ -33,12 +35,37 @@ func TestAccFastlyServiceV1_basic(t *testing.T) {
 			},
 
 			resource.TestStep{
-				Config: testAccServiceV1Config(nameUpdate),
+				Config: testAccServiceV1Config(nameUpdate, domainName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckServiceV1Exists("fastly_service_v1.foo", &service),
-					testAccCheckFastlyServiceV1Attributes(&service, nameUpdate),
+					testAccCheckFastlyServiceV1Attributes(&service, nameUpdate, domainName),
 					resource.TestCheckResourceAttr(
 						"fastly_service_v1.foo", "name", nameUpdate),
+					resource.TestCheckResourceAttr(
+						"fastly_service_v1.foo", "ActiveVersion", "0"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccFastlyServiceV1_domain(t *testing.T) {
+	var service gofastly.Service
+	name := acctest.RandString(10)
+	domainName := acctest.RandString(10)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckServiceV1Destroy,
+		Steps: []resource.TestStep{
+			resource.TestStep{
+				Config: testAccServiceV1Config(name, domainName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckServiceV1Exists("fastly_service_v1.foo", &service),
+					testAccCheckFastlyServiceV1Attributes(&service, name, domainName),
+					resource.TestCheckResourceAttr(
+						"fastly_service_v1.foo", "name", name),
 					resource.TestCheckResourceAttr(
 						"fastly_service_v1.foo", "ActiveVersion", "0"),
 				),
@@ -73,11 +100,17 @@ func testAccCheckServiceV1Exists(n string, service *gofastly.Service) resource.T
 	}
 }
 
-func testAccCheckFastlyServiceV1Attributes(service *gofastly.Service, name string) resource.TestCheckFunc {
+func testAccCheckFastlyServiceV1Attributes(service *gofastly.Service, name, domain string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 
 		if service.Name != name {
 			return fmt.Errorf("Bad name, expected (%s), got (%s)", name, service.Name)
+		}
+
+		log.Printf("\n---\nDEBUG\n---\nService:\n%#v\n\n---\n", service)
+
+		for _, v := range service.Versions {
+			log.Printf("\n\tversion: %#v\n\n", v)
 		}
 
 		return nil
@@ -91,10 +124,8 @@ func testAccCheckServiceV1Destroy(s *terraform.State) error {
 		if rs.Type != "fastly_service_v1" {
 			continue
 		}
-		log.Printf("\n---\nDEBUG in delete for fastly service\n---\n")
 
 		conn := testAccProvider.Meta().(*FastlyClient).conn
-
 		l, err := conn.ListServices(&gofastly.ListServicesInput{})
 		if err != nil {
 			return fmt.Errorf("[WARN] Error listing servcies when deleting Fastly Service (%s): %s", rs.Primary.ID, err)
@@ -110,9 +141,14 @@ func testAccCheckServiceV1Destroy(s *terraform.State) error {
 	return nil
 }
 
-func testAccServiceV1Config(name string) string {
+func testAccServiceV1Config(name, domain string) string {
 	return fmt.Sprintf(`
 resource "fastly_service_v1" "foo" {
-        name = "%s"
-}`, name)
+  name = "%s"
+
+  domain {
+    name    = "%s"
+    comment = "tf-testing-domain"
+  }
+}`, name, domain)
 }
