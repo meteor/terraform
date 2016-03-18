@@ -58,6 +58,11 @@ func resourceServiceV1() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 						},
+						"port": &schema.Schema{
+							Type:     schema.TypeInt,
+							Optional: true,
+							Default:  80,
+						},
 					},
 				},
 			},
@@ -274,6 +279,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 				Version: latestVersion,
 				Name:    df["name"].(string),
 				Address: df["address"].(string),
+				Port:    uint(df["port"].(int)),
 			}
 
 			_, err := conn.CreateBackend(&opts)
@@ -345,7 +351,10 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 		// Refresh Domains
 		var dl []map[string]interface{}
 		for _, d := range domainList {
-			dl = append(dl, map[string]interface{}{"name": d.Name, "comment": d.Comment})
+			dl = append(dl, map[string]interface{}{
+				"name":    d.Name,
+				"comment": d.Comment,
+			})
 		}
 
 		if err := d.Set("domain", dl); err != nil {
@@ -364,11 +373,17 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 		}
 		var bl []map[string]interface{}
 		for _, b := range backendList {
-			bl = append(bl, map[string]interface{}{"name": b.Name, "address": b.Address})
+			log.Printf("\n---\nBackend: %#v\n---\n", b)
+			bl = append(bl, map[string]interface{}{
+				"name":    b.Name,
+				"address": b.Address,
+				"port":    int(b.Port),
+			})
 		}
 
 		if err := d.Set("backend", bl); err != nil {
 			log.Printf("\n@@@@@@\nerror setting Backends: %s\n@@@\n", err)
+			log.Printf("\n@@@@@@\nBackends: %#v\n@@@\n", bl)
 			log.Printf("[WARN] Error setting Backends for (%s): %s", d.Id(), err)
 		}
 	} else {
