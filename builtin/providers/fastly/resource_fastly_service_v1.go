@@ -110,6 +110,18 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
+	// update settings/names
+	// No new verions is required for this
+	if d.HasChange("name") {
+		_, err := conn.UpdateService(&gofastly.UpdateServiceInput{
+			ID:   d.Id(),
+			Name: d.Get("name").(string),
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	var needsChange bool
 	if d.HasChange("domain") {
 		log.Printf("\n------ has domainchange")
