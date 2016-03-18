@@ -91,7 +91,7 @@ func resourceServiceV1Create(d *schema.ResourceData, meta interface{}) error {
 
 	d.SetId(service.ID)
 	// Since this is a new creation, there will be an inactive version 1 waiting
-	d.Set("active_version", "1")
+	// d.Set("active_version", "-1")
 	latestVersion := "1"
 
 	log.Printf("\n---\nDEBUG Service in Create: %#v\n---\n", service)
@@ -127,16 +127,17 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 
 	// if domains or backends have changed, then we create a new version and
 	// post the updates
-	latestVersion := "1"
-	if attr, ok := d.GetOk("active_version"); ok {
-		latestVersion = attr.(string)
-	}
+	// latestVersion := "1"
+	// if attr, ok := d.GetOk("active_version"); ok {
+	// latestVersion = attr.(string)
+	latestVersion := d.Get("active_version").(string)
+	// }
 
 	if needsChange {
 		log.Printf("\n00000\n\n\tshould change\n\n000000\n")
 		log.Printf("\n---\nDEBUG Service in needs change: %#v\n---\n", service)
 		log.Printf("\n---\nDEBUG Lastest Version in needs change: %#v\n---\n", latestVersion)
-		if latestVersion != "1" {
+		if latestVersion != "" {
 			log.Printf("\n\t---- creating version\n---\n")
 			newVersion, err := conn.CloneVersion(&gofastly.CloneVersionInput{
 				Service: d.Id(),
@@ -148,6 +149,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 			latestVersion = newVersion.Number
 			time.Sleep(10 * time.Second)
 		} else {
+			latestVersion = "1"
 			log.Printf("\n\t---- not creating version, using %s\n---\n", latestVersion)
 		}
 
@@ -188,8 +190,12 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 			}
 		}
 
-		// PUT new domains
-		// var dA []map[string]interface{}
+		// POST new Domains
+		// Note: we don't utilize the PUT endpoint to update a Domain, we simply
+		// destory it and create a new one. This is how Terraform works with nested
+		// sub resources, we only get the full diff not a partial set item diff.
+		// Because this is done on a new version of the configuration, this is
+		// considered safe
 		for _, dRaw := range add {
 			df := dRaw.(map[string]interface{})
 			log.Printf("\n\t--- domain to add: %s\n", df["name"].(string))
@@ -242,8 +248,12 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 			}
 		}
 
-		// PUT new Backends
-		// var dA []map[string]interface{}
+		// POST new Backends
+		// Note: we don't utilize the PUT endpoint to update a Backend, we simply
+		// destory it and create a new one. This is how Terraform works with nested
+		// sub resources, we only get the full diff not a partial set item diff.
+		// Because this is done on a new version of the configuration, this is
+		// considered safe
 		for _, dRaw := range nbs.Difference(obs).List() {
 			df := dRaw.(map[string]interface{})
 			log.Printf("\n\t--- backend to add: %s\n", df["name"].(string))
