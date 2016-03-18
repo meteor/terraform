@@ -3,6 +3,7 @@ package fastly
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/hashicorp/terraform/helper/schema"
 	gofastly "github.com/sethvargo/go-fastly"
@@ -22,7 +23,7 @@ func resourceServiceV1() *schema.Resource {
 			},
 
 			"active_version": &schema.Schema{
-				Type:     schema.TypeInt,
+				Type:     schema.TypeString,
 				Computed: true,
 			},
 
@@ -59,6 +60,11 @@ func resourceServiceV1() *schema.Resource {
 						},
 					},
 				},
+			},
+
+			"force_destroy": &schema.Schema{
+				Type:     schema.TypeBool,
+				Optional: true,
 			},
 		},
 	}
@@ -139,11 +145,13 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 			if err != nil {
 				return err
 			}
-			latestVersion = fmt.Sprintf("%d", newVersion.Number)
+			latestVersion = newVersion.Number
+			time.Sleep(10 * time.Second)
 		} else {
 			log.Printf("\n\t---- not creating version, using %s\n---\n", latestVersion)
 		}
 
+		log.Printf("\n---\nDEBUG Lastest Version :::: %s\n---\n", latestVersion)
 		// find differences in domains
 		od, nd := d.GetChange("domain")
 		if od == nil {
@@ -155,16 +163,34 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 
 		ods := od.(*schema.Set)
 		nds := nd.(*schema.Set)
-		log.Printf("\n\t### old domains: %#v\n", ods)
-		log.Printf("\n\t### new domains: %#v\n", nds)
+		// log.Printf("\n\t### old domains: %#v\n", ods)
+		// log.Printf("\n\t### new domains: %#v\n", nds)
 
 		// delete removed domains
-		log.Printf("--- ods dif ns : %#v\n", ods.Difference(nds).List())
-		log.Printf("--- nds dif os : %#v\n", nds.Difference(ods).List())
+		remove := ods.Difference(nds).List()
+		add := nds.Difference(ods).List()
+		log.Printf("--- ods dif ns : %#v\n", remove)
+		log.Printf("--- nds dif os : %#v\n", add)
+
+		for _, dRaw := range remove {
+			df := dRaw.(map[string]interface{})
+			log.Printf("\n\t--- domain to remove: %s\n", df["name"].(string))
+			opts := gofastly.DeleteDomainInput{
+				Service: d.Id(),
+				Version: latestVersion,
+				Name:    df["name"].(string),
+			}
+
+			log.Printf("[DEBUG] Fastly Domain Removal opts: %#v", opts)
+			err := conn.DeleteDomain(&opts)
+			if err != nil {
+				return err
+			}
+		}
 
 		// PUT new domains
 		// var dA []map[string]interface{}
-		for _, dRaw := range nds.Difference(ods).List() {
+		for _, dRaw := range add {
 			df := dRaw.(map[string]interface{})
 			log.Printf("\n\t--- domain to add: %s\n", df["name"].(string))
 			opts := gofastly.CreateDomainInput{
@@ -176,6 +202,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 				opts.Comment = v.(string)
 			}
 
+			log.Printf("[DEBUG] Fastly Domain Addition opts: %#v", opts)
 			_, err := conn.CreateDomain(&opts)
 			if err != nil {
 				return err
@@ -193,14 +220,29 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 
 		obs := ob.(*schema.Set)
 		nbs := nb.(*schema.Set)
-		log.Printf("\n\t### old domains: %#v\n", obs)
-		log.Printf("\n\t### new domains: %#v\n", nbs)
+		removeBackends := obs.Difference(nbs).List()
+		addBackends := nbs.Difference(obs).List()
+		log.Printf("--- obs dif nbs : %#v\n", removeBackends)
+		log.Printf("--- nbs dif obs : %#v\n", addBackends)
 
-		// delete removed backends
-		log.Printf("--- obs dif nbs : %#v\n", obs.Difference(nbs).List())
-		log.Printf("--- nbs dif obs : %#v\n", nbs.Difference(obs).List())
+		// DELETE old Backends
+		for _, bRaw := range removeBackends {
+			bf := bRaw.(map[string]interface{})
+			log.Printf("\n\t--- backend to remove: %s\n", bf["name"].(string))
+			opts := gofastly.DeleteBackendInput{
+				Service: d.Id(),
+				Version: latestVersion,
+				Name:    bf["name"].(string),
+			}
 
-		// PUT new domains
+			log.Printf("[DEBUG] Fastly Backend Removal opts: %#v", opts)
+			err := conn.DeleteBackend(&opts)
+			if err != nil {
+				return err
+			}
+		}
+
+		// PUT new Backends
 		// var dA []map[string]interface{}
 		for _, dRaw := range nbs.Difference(obs).List() {
 			df := dRaw.(map[string]interface{})
@@ -218,11 +260,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 			}
 		}
 
-		// if err != nil {
-		// 	return err
-		// }
-
-		// validateversion
+		// validate version
 		valid, msg, err := conn.ValidateVersion(&gofastly.ValidateVersionInput{
 			Service: d.Id(),
 			Version: latestVersion,
@@ -257,7 +295,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*FastlyClient).conn
 
-	s, err := conn.GetService(&gofastly.GetServiceInput{
+	s, err := conn.GetServiceDetails(&gofastly.GetServiceInput{
 		ID: d.Id(),
 	})
 
@@ -268,45 +306,84 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 	log.Printf("\n---\nService Details: %#v\n---\n", s)
 	log.Printf("\n---\nService versions: %d\n---\n", s.ActiveVersion)
 
-	if s.ActiveVersion != 0 {
+	if s.ActiveVersion.Number != "" {
 		// get latest version info
+		// TODO: update go-fastly to support a ActiveVersion struct, which contains
+		// domain and backend info in the response. Here we do 2 additional queries
+		// to find out that info
+		domainList, err := conn.ListDomains(&gofastly.ListDomainsInput{
+			Service: d.Id(),
+			Version: s.ActiveVersion.Number,
+		})
 
-		var version *gofastly.Version
-		for _, v := range s.Versions {
-			// the versions from the /service endpoint are returned as strings :/
-			// TODO: Update go-fastly for this
-			// vN, err := strconv.ParseUint(v.Number, 10, 32)
-			// if err != nil {
-			// 	return fmt.Errorf("[ERR] Error converting the version number: %s", err)
-			// }
-			if v.Number == fmt.Sprintf("%d", s.ActiveVersion) {
-				log.Printf("\n--\nFound version: %#v\n", v)
-				*version = *v
-			}
+		if err != nil {
+			return err
 		}
 
-		if version == nil {
-			log.Printf("[WARN] No active versions found yet")
+		// Refresh Domains
+		var dl []map[string]interface{}
+		for _, d := range domainList {
+			dl = append(dl, map[string]interface{}{"name": d.Name, "comment": d.Comment})
 		}
-		// for each domain, write to state
 
-		// for each backend, write to state
+		if err := d.Set("domain", dl); err != nil {
+			log.Printf("\n@@@@@@\nerror setting domains: %s\n@@@\n", err)
+			log.Printf("[WARN] Error setting Domains for (%s): %s", d.Id(), err)
+		}
+
+		// Refresh Backends
+		backendList, err := conn.ListBackends(&gofastly.ListBackendsInput{
+			Service: d.Id(),
+			Version: s.ActiveVersion.Number,
+		})
+
+		if err != nil {
+			return err
+		}
+		var bl []map[string]interface{}
+		for _, b := range backendList {
+			bl = append(bl, map[string]interface{}{"name": b.Name, "address": b.Address})
+		}
+
+		if err := d.Set("backend", bl); err != nil {
+			log.Printf("\n@@@@@@\nerror setting Backends: %s\n@@@\n", err)
+			log.Printf("[WARN] Error setting Backends for (%s): %s", d.Id(), err)
+		}
 	} else {
 		log.Printf("\n---\nDEBUG Active Version is 0\n")
 	}
 
-	// dA = append(dA, map[string]interface{}{"name": domain.Name, "comment": domain.Comment})
-	// if err := d.Set("domain", dA); err != nil {
-	// 	log.Printf("[ERR] Error setting domains: %s", err)
-	// }
 	d.Set("name", s.Name)
-	d.Set("active_version", s.ActiveVersion)
+	d.Set("active_version", s.ActiveVersion.Number)
 
 	return nil
 }
 
 func resourceServiceV1Delete(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*FastlyClient).conn
+
+	if d.Get("force_destroy").(bool) {
+		s, err := conn.GetServiceDetails(&gofastly.GetServiceInput{
+			ID: d.Id(),
+		})
+
+		if err != nil {
+			return err
+		}
+
+		log.Printf("\n---\nService Details: %#v\n---\n", s)
+		log.Printf("\n---\nService versions: %d\n---\n", s.ActiveVersion)
+
+		if s.ActiveVersion.Number != "" {
+			_, err := conn.DeactivateVersion(&gofastly.DeactivateVersionInput{
+				Service: d.Id(),
+				Version: s.ActiveVersion.Number,
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
 
 	err := conn.DeleteService(&gofastly.DeleteServiceInput{
 		ID: d.Id(),
