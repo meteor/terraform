@@ -50,18 +50,92 @@ func resourceServiceV1() *schema.Resource {
 				Required: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
+						// required fields
 						"name": &schema.Schema{
-							Type:     schema.TypeString,
-							Required: true,
+							Type:        schema.TypeString,
+							Required:    true,
+							Description: "A name for this Backend",
 						},
 						"address": &schema.Schema{
-							Type:     schema.TypeString,
-							Required: true,
+							Type:        schema.TypeString,
+							Required:    true,
+							Description: "An IPv4, hostname, or IPv6 address for the Backend",
+						},
+						// Optional fields, defaults where they exist
+						"auto_loadbalance": &schema.Schema{
+							Type:        schema.TypeBool,
+							Optional:    true,
+							Default:     true,
+							Description: "Should this Backend be loadbalanced",
+						},
+						"between_bytes_timeout": &schema.Schema{
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     10000,
+							Description: "How long to wait between bytes in milliseconds",
+						},
+						"connect_timeout": &schema.Schema{
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     1000,
+							Description: "How long to wait for a timeout in milliseconds",
+						},
+						"error_threshold": &schema.Schema{
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     0,
+							Description: "Number of errors to allow before the Backend is marked as down",
+						},
+						"first_byte_timeout": &schema.Schema{
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     15000,
+							Description: "How long to wait for the first bytes in milliseconds",
+						},
+						"max_conn": &schema.Schema{
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     200,
+							Description: "Maximum number of connections for this Backend",
+						},
+						"max_tls_version": &schema.Schema{
+							Type:        schema.TypeString,
+							Optional:    true,
+							Computed:    true,
+							Description: "maximum allowed TLS version on ssl connections to this Backend",
+						},
+						"min_tls_version": &schema.Schema{
+							Type:        schema.TypeString,
+							Optional:    true,
+							Computed:    true,
+							Description: "minimum allowed TLS version on ssl connections to this Backend",
 						},
 						"port": &schema.Schema{
-							Type:     schema.TypeInt,
-							Optional: true,
-							Default:  80,
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     80,
+							Description: "The port number Backend responds on. Default 80",
+						},
+						"ssl_check_cert": &schema.Schema{
+							Type:        schema.TypeBool,
+							Optional:    true,
+							Default:     true,
+							Description: "Be strict on checking SSL certs",
+						},
+						// UseSSL is something we want to support in the future, but
+						// requires SSL setup we don't yet have
+						// TODO: Provide all SSL fields from https://docs.fastly.com/api/config#backend
+						// "use_ssl": &schema.Schema{
+						// 	Type:        schema.TypeBool,
+						// 	Optional:    true,
+						// 	Default:     false,
+						// 	Description: "Whether or not to use SSL to reach the Backend",
+						// },
+						"weight": &schema.Schema{
+							Type:        schema.TypeInt,
+							Optional:    true,
+							Default:     100,
+							Description: "How long to wait for the first bytes in milliseconds",
 						},
 					},
 				},
@@ -274,14 +348,35 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 		for _, dRaw := range nbs.Difference(obs).List() {
 			df := dRaw.(map[string]interface{})
 			log.Printf("\n\t--- backend to add: %s\n", df["name"].(string))
+			log.Printf("\n---\n\n\nbackend raw:\n\n%#v\n\n---\n", df)
 			opts := gofastly.CreateBackendInput{
-				Service: d.Id(),
-				Version: latestVersion,
-				Name:    df["name"].(string),
-				Address: df["address"].(string),
-				Port:    uint(df["port"].(int)),
+				Service:             d.Id(),
+				Version:             latestVersion,
+				Name:                df["name"].(string),
+				Address:             df["address"].(string),
+				AutoLoadbalance:     df["auto_loadbalance"].(bool),
+				SSLCheckCert:        df["ssl_check_cert"].(bool),
+				Port:                uint(df["port"].(int)),
+				BetweenBytesTimeout: uint(df["between_bytes_timeout"].(int)),
+				ConnectTimeout:      uint(df["connect_timeout"].(int)),
+				ErrorThreshold:      uint(df["error_threshold"].(int)),
+				FirstByteTimeout:    uint(df["first_byte_timeout"].(int)),
+				MaxConn:             uint(df["max_conn"].(int)),
+				Weight:              uint(df["weight"].(int)),
+				// UseSSL:              df["use_ssl"].(bool),
 			}
 
+			// The Fastly API retuns null values for Min/Max TLS Version. go-fastly
+			// will provided these as empty strings, so we want to filter that out and
+			// omit them from the request if they are empty
+			if df["max_tls_version"].(string) != "" {
+				opts.MaxTLSVersion = df["max_tls_version"].(string)
+			}
+			if df["min_tls_version"].(string) != "" {
+				opts.MinTLSVersion = df["min_tls_version"].(string)
+			}
+
+			log.Printf("[DEBUG] Create Backend Opts: %#v", opts)
 			_, err := conn.CreateBackend(&opts)
 			if err != nil {
 				return err
@@ -334,6 +429,9 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 	log.Printf("\n---\nService Details: %#v\n---\n", s)
 	log.Printf("\n---\nService versions: %d\n---\n", s.ActiveVersion)
 
+	d.Set("name", s.Name)
+	d.Set("active_version", s.ActiveVersion.Number)
+
 	if s.ActiveVersion.Number != "" {
 		// get latest version info
 		// TODO: update go-fastly to support a ActiveVersion struct, which contains
@@ -374,11 +472,35 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 		var bl []map[string]interface{}
 		for _, b := range backendList {
 			log.Printf("\n---\nBackend: %#v\n---\n", b)
-			bl = append(bl, map[string]interface{}{
-				"name":    b.Name,
-				"address": b.Address,
-				"port":    int(b.Port),
-			})
+
+			// build up the new backend
+			nb := map[string]interface{}{
+				"name":                  b.Name,
+				"address":               b.Address,
+				"auto_loadbalance":      b.AutoLoadbalance,
+				"between_bytes_timeout": b.BetweenBytesTimeout,
+				"connect_timeout":       b.ConnectTimeout,
+				"error_threshold":       b.ErrorThreshold,
+				"first_byte_timeout":    b.FirstByteTimeout,
+				"max_conn":              b.MaxConn,
+				"max_tls_version":       b.MaxTLSVersion,
+				"min_tls_version":       b.MinTLSVersion,
+				"port":                  b.Port,
+				"ssl_check_cert":        b.SSLCheckCert,
+				"weight":                b.Weight,
+				"use_ssl":               b.UseSSL,
+			}
+
+			// The Fastly API retuns null values for Min/Max TLS Version. go-fastly
+			// will provided these as empty strings, so we want to filter that out
+			if b.MinTLSVersion != "" {
+				nb["min_tls_version"] = b.MinTLSVersion
+			}
+			if b.MaxTLSVersion != "" {
+				nb["max_tls_version"] = b.MaxTLSVersion
+			}
+
+			bl = append(bl, nb)
 		}
 
 		if err := d.Set("backend", bl); err != nil {
@@ -389,9 +511,6 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 	} else {
 		log.Printf("\n---\nDEBUG Active Version is 0\n")
 	}
-
-	d.Set("name", s.Name)
-	d.Set("active_version", s.ActiveVersion.Number)
 
 	return nil
 }
