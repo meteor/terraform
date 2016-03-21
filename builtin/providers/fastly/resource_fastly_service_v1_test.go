@@ -98,7 +98,7 @@ func TestAccFastlyServiceV1_domain(t *testing.T) {
 					resource.TestCheckResourceAttr(
 						"fastly_service_v1.foo", "name", name),
 					resource.TestCheckResourceAttr(
-						"fastly_service_v1.foo", "ActiveVersion", "0"),
+						"fastly_service_v1.foo", "active_version", "1"),
 				),
 			},
 		},
