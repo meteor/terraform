@@ -45,6 +45,18 @@ func resourceServiceV1() *schema.Resource {
 				},
 			},
 
+			"default_ttl": &schema.Schema{
+				Type:     schema.TypeInt,
+				Optional: true,
+				Default:  3600,
+			},
+
+			"default_host": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+
 			"backend": &schema.Schema{
 				Type:     schema.TypeSet,
 				Required: true,
@@ -188,6 +200,7 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 	if err != nil {
 		return err
 	}
+	// TODO: if service is nil, should we d.SetId("")?
 
 	// update settings/names
 	// No new verions is required for this
@@ -216,6 +229,16 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 		log.Printf("\n-00----- no backend change")
 	}
 
+	if d.HasChange("default_host") {
+		log.Printf("\n------ has default_host change")
+		needsChange = true
+	}
+
+	if d.HasChange("default_ttl") {
+		log.Printf("\n------ has default_ttl change")
+		needsChange = true
+	}
+
 	// if domains or backends have changed, then we create a new version and
 	// post the updates
 	// latestVersion := "1"
@@ -228,6 +251,8 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 		log.Printf("\n00000\n\n\tshould change\n\n000000\n")
 		log.Printf("\n---\nDEBUG Service in needs change: %#v\n---\n", service)
 		log.Printf("\n---\nDEBUG Lastest Version in needs change: %#v\n---\n", latestVersion)
+		// Clone the latest version if needed, giving us an unlocked version we can
+		// POST/PUT/DELETE from
 		if latestVersion != "" {
 			log.Printf("\n\t---- creating version\n---\n")
 			newVersion, err := conn.CloneVersion(&gofastly.CloneVersionInput{
@@ -242,6 +267,25 @@ func resourceServiceV1Update(d *schema.ResourceData, meta interface{}) error {
 		} else {
 			latestVersion = "1"
 			log.Printf("\n\t---- not creating version, using %s\n---\n", latestVersion)
+		}
+
+		// update general settings
+
+		if d.HasChange("default_host") || d.HasChange("default_ttl") {
+			opts := gofastly.UpdateSettingsInput{
+				Service:    d.Id(),
+				Version:    latestVersion,
+				DefaultTTL: uint(d.Get("default_ttl").(int)),
+			}
+			if attr, ok := d.GetOk("default_host"); ok {
+				opts.DefaultHost = attr.(string)
+			}
+
+			log.Printf("[DEBUG] Update Settings opts: %#v", opts)
+			_, err := conn.UpdateSettings(&opts)
+			if err != nil {
+				return err
+			}
 		}
 
 		log.Printf("\n---\nDEBUG Lastest Version :::: %s\n---\n", latestVersion)
@@ -434,6 +478,18 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 
 	if s.ActiveVersion.Number != "" {
 		// get latest version info
+
+		settings, err := conn.GetSettings(&gofastly.GetSettingsInput{
+			Service: d.Id(),
+			Version: s.ActiveVersion.Number,
+		})
+		if err != nil {
+			log.Printf("[ERR] Error looking up Version settings for (%s), version (%s): %s", d.Id(), s.ActiveVersion.Number, err)
+		} else {
+			d.Set("default_host", settings.DefaultHost)
+			d.Set("default_ttl", settings.DefaultTTL)
+		}
+
 		// TODO: update go-fastly to support a ActiveVersion struct, which contains
 		// domain and backend info in the response. Here we do 2 additional queries
 		// to find out that info
@@ -488,7 +544,7 @@ func resourceServiceV1Read(d *schema.ResourceData, meta interface{}) error {
 				"port":                  b.Port,
 				"ssl_check_cert":        b.SSLCheckCert,
 				"weight":                b.Weight,
-				"use_ssl":               b.UseSSL,
+				// "use_ssl":               b.UseSSL,
 			}
 
 			// The Fastly API retuns null values for Min/Max TLS Version. go-fastly
