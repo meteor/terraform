@@ -37,6 +37,8 @@ The command-line flags are all optional. The list of available flags are:
 
 * `-input=true` - Ask for input for variables if not directly set.
 
+* `-confirm-plan` - Display the plan and ask for confirmation before applying.
+
 * `-no-color` - Disables output with coloring.
 
 * `-parallelism=n` - Limit the number of concurrent operation as Terraform

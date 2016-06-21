@@ -170,6 +170,7 @@ func (m *Meta) Operation() *backend.Operation {
 		PlanOutBackend:   m.backendState,
 		Targets:          m.targets,
 		UIIn:             m.UIInput(),
+		UIOut:            m.Ui,
 		Environment:      m.Env(),
 		LockState:        m.stateLock,
 		StateLockTimeout: m.stateLockTimeout,

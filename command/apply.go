@@ -29,7 +29,7 @@ type ApplyCommand struct {
 }
 
 func (c *ApplyCommand) Run(args []string) int {
-	var destroyForce, refresh bool
+	var destroyForce, refresh, confirmPlan bool
 	args = c.Meta.process(args, true)
 
 	cmdName := "apply"
@@ -42,6 +42,9 @@ func (c *ApplyCommand) Run(args []string) int {
 		cmdFlags.BoolVar(&destroyForce, "force", false, "force")
 	}
 	cmdFlags.BoolVar(&refresh, "refresh", true, "refresh")
+	if !c.Destroy {
+		cmdFlags.BoolVar(&confirmPlan, "confirm-plan", false, "confirm plan before applying")
+	}
 	cmdFlags.IntVar(
 		&c.Meta.parallelism, "parallelism", DefaultParallelism, "parallelism")
 	cmdFlags.StringVar(&c.Meta.statePath, "state", "", "path")
@@ -106,6 +109,11 @@ func (c *ApplyCommand) Run(args []string) int {
 	if plan != nil {
 		// Reset the config path for backend loading
 		configPath = ""
+
+		if confirmPlan {
+			c.Ui.Error("Cannot combine -confirm-plan with a plan file.")
+			return 1
+		}
 	}
 
 	// Load the module if we don't have one yet (not running from plan)
@@ -184,6 +192,7 @@ func (c *ApplyCommand) Run(args []string) int {
 	opReq.Plan = plan
 	opReq.PlanRefresh = refresh
 	opReq.Type = backend.OperationTypeApply
+	opReq.ConfirmPlan = confirmPlan
 
 	// Perform the operation
 	ctx, ctxCancel := context.WithCancel(context.Background())
@@ -277,6 +286,8 @@ Options:
   -lock=true             Lock the state file when locking is supported.
 
   -lock-timeout=0s       Duration to retry a state lock.
+
+  -confirm-plan          Display the plan and ask for confirmation before applying.
 
   -input=true            Ask for input for variables if not directly set.
 

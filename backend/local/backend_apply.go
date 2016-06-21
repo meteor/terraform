@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/terraform/backend"
 	"github.com/hashicorp/terraform/command/clistate"
+	"github.com/hashicorp/terraform/command/format"
 	"github.com/hashicorp/terraform/config/module"
 	"github.com/hashicorp/terraform/state"
 	"github.com/hashicorp/terraform/terraform"
@@ -87,9 +89,35 @@ func (b *Local) opApply(
 
 		// Perform the plan
 		log.Printf("[INFO] backend/local: apply calling Plan")
-		if _, err := tfCtx.Plan(); err != nil {
+		plan, err := tfCtx.Plan()
+		if err != nil {
 			runningOp.Err = errwrap.Wrapf("Error running plan: {{err}}", err)
 			return
+		}
+
+		trivialPlan := plan.Diff == nil || plan.Diff.Empty()
+		if op.ConfirmPlan && !trivialPlan {
+			op.UIOut.Output(strings.TrimSpace(confirmPlanHeader) + "\n")
+			op.UIOut.Output(format.Plan(&format.PlanOpts{
+				Plan:        plan,
+				Color:       b.Colorize(),
+				ModuleDepth: -1,
+			}))
+			desc := "Terraform will apply the plan described above.\n" +
+				"Only 'yes' will be accepted to confirm."
+			v, err := op.UIIn.Input(&terraform.InputOpts{
+				Id:          "confirm",
+				Query:       "Do you want to apply the plan above?",
+				Description: desc,
+			})
+			if err != nil {
+				runningOp.Err = errwrap.Wrapf("Error asking for confirmation: {{err}}", err)
+				return
+			}
+			if v != "yes" {
+				runningOp.Err = errors.New("Apply cancelled.")
+				return
+			}
 		}
 	}
 
@@ -193,4 +221,12 @@ Apply requires configuration to be present. Applying without a configuration
 would mark everything for destruction, which is normally not what is desired.
 If you would like to destroy everything, please run 'terraform destroy' instead
 which does not require any configuration files.
+`
+
+const confirmPlanHeader = `
+The Terraform execution plan has been generated and is shown below.
+Resources are shown in alphabetical order for quick scanning. Green resources
+will be created (or destroyed and then created if an existing resource
+exists), yellow resources are being changed in-place, and red resources
+will be destroyed. Cyan entries are data sources to be read.
 `
