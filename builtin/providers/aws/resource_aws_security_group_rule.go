@@ -95,6 +95,14 @@ func resourceAwsSecurityGroupRuleCreate(d *schema.ResourceData, meta interface{}
 	conn := meta.(*AWSClient).ec2conn
 	sg_id := d.Get("security_group_id").(string)
 
+	if ssg_id, ok := d.GetOk("source_security_group_id"); ok {
+		if _, ok := d.GetOk("self"); !ok {
+			// self is not set, but source_security_group_id is. Let's calculate self
+			// explicitly.
+			d.Set("self", sg_id == ssg_id.(string))
+		}
+	}
+
 	awsMutexKV.Lock(sg_id)
 	defer awsMutexKV.Unlock(sg_id)
 

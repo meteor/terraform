@@ -2,6 +2,7 @@ package aws
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"testing"
@@ -374,6 +375,7 @@ func TestAccAWSSecurityGroupRule_PartialMatching_Source(t *testing.T) {
 					testAccCheckAWSSecurityGroupRuleExists("aws_security_group.nat", &nat),
 					setupSG,
 					testAccCheckAWSSecurityGroupRuleAttributes("aws_security_group_rule.source_ingress", &group, &p, "ingress"),
+					testAccCheckAWSSecurityGroupRuleSelfIsTrue("aws_security_group_rule.self_ingress"),
 				),
 			},
 		},
@@ -631,6 +633,21 @@ func testAccCheckAWSSecurityGroupRuleAttributes(n string, group *ec2.SecurityGro
 		}
 
 		return fmt.Errorf("Error here\n\tlooking for %s, wasn't found in %s", p, rules)
+	}
+}
+
+func testAccCheckAWSSecurityGroupRuleSelfIsTrue(n string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[n]
+		if !ok {
+			return fmt.Errorf("Security Group Rule Not found: %s", n)
+		}
+
+		if rs.Primary.Attributes["self"] != "true" {
+			return errors.New("self is not set to true")
+		}
+
+		return nil
 	}
 }
 
@@ -902,6 +919,15 @@ resource "aws_security_group_rule" "source_ingress" {
 
                 source_security_group_id = "${aws_security_group.nat.id}"
    security_group_id = "${aws_security_group.web.id}"
+}
+
+resource "aws_security_group_rule" "self_ingress" {
+    type        = "ingress"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    source_security_group_id = "${aws_security_group.web.id}"
+    security_group_id = "${aws_security_group.web.id}"
 }
 
 resource "aws_security_group_rule" "other_ingress" {
