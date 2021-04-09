@@ -5,7 +5,7 @@
 VAGRANTFILE_API_VERSION = "2"
 
 # Software version variables
-GOVERSION = "1.8.1"
+GOVERSION = "1.13"
 UBUNTUVERSION = "16.04"
 
 # CPU and RAM can be adjusted depending on your system
@@ -57,9 +57,15 @@ grep -q -F 'cd /opt/gopath/src/github.com/hashicorp/terraform' /home/vagrant/.ba
 
 ## After login, change to terraform directory
 cd /opt/gopath/src/github.com/hashicorp/terraform
+make fmt
+make bin
+
 EOF
 
+
 SCRIPT
+
+GOPATH = ENV["GOPATH"]
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.vm.box = "bento/ubuntu-#{UBUNTUVERSION}"
@@ -68,6 +74,10 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.vm.provision "prepare-shell", type: "shell", inline: "sudo sed -i '/tty/!s/mesg n/tty -s \\&\\& mesg n/' /root/.profile", privileged: false
   config.vm.provision "initial-setup", type: "shell", inline: $script
   config.vm.synced_folder '.', '/opt/gopath/src/github.com/hashicorp/terraform'
+  config.vm.synced_folder "#{GOPATH}/src/github.com/meteor/amsterdam/cmds/terraform-provider-dockerregistry", '/opt/gopath/src/github.com/meteor/amsterdam/cmds/terraform-provider-dockerregistry'
+  config.vm.synced_folder "#{GOPATH}/src/github.com/meteor/amsterdam/cmds/terraform-provider-elasticsearch", '/opt/gopath/src/github.com/meteor/amsterdam/cmds/terraform-provider-elasticsearch'
+  config.vm.synced_folder "#{GOPATH}/src/github.com/meteor/amsterdam/cmds/terraform-provider-mdg", '/opt/gopath/src/github.com/meteor/amsterdam/cmds/terraform-provider-mdg'
+  config.vm.synced_folder "#{GOPATH}/src/github.com/jianyuan/terraform-provider-sentry", '/opt/gopath/src/github.com/jianyuan/terraform-provider-sentry'
 
   config.vm.provider "docker" do |v, override|
     override.vm.box = "tknerr/baseimage-ubuntu-#{UBUNTUVERSION}"
