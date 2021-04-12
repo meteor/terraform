@@ -78,6 +78,8 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.vm.synced_folder "#{GOPATH}/src/github.com/meteor/amsterdam/cmds/terraform-provider-elasticsearch", '/opt/gopath/src/github.com/meteor/amsterdam/cmds/terraform-provider-elasticsearch'
   config.vm.synced_folder "#{GOPATH}/src/github.com/meteor/amsterdam/cmds/terraform-provider-mdg", '/opt/gopath/src/github.com/meteor/amsterdam/cmds/terraform-provider-mdg'
   config.vm.synced_folder "#{GOPATH}/src/github.com/jianyuan/terraform-provider-sentry", '/opt/gopath/src/github.com/jianyuan/terraform-provider-sentry'
+  config.vm.synced_folder "#{GOPATH}/src/github.com/meteor/docker-registry-client", '/opt/gopath/src/github.com/meteor/docker-registry-client'
+
 
   config.vm.provider "docker" do |v, override|
     override.vm.box = "tknerr/baseimage-ubuntu-#{UBUNTUVERSION}"
