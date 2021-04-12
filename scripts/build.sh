@@ -54,10 +54,6 @@ gox \
     -osarch="${XC_EXCLUDE_OSARCH}" \
     -ldflags "${LD_FLAGS}" \
     -output "pkg/{{.OS}}_{{.Arch}}/terraform" \
-    github.com/meteor/amsterdam/cmds/terraform-provider-dockerregistry \
-    github.com/meteor/amsterdam/cmds/terraform-provider-elasticsearch \
-    github.com/meteor/amsterdam/cmds/terraform-provider-mdg \
-    github.com/jianyuan/terraform-provider-sentry \
     .
 
 # Move all the compiled things to the $GOPATH/bin
